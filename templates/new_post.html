@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+
+{% block title %}New Post - Private Blog{% endblock %}
+
+{% block content %}
+<div class="new-post-container">
+    <h1>New Post</h1>
+
+    {% if error %}
+    <div class="error">{{ error }}</div>
+    {% endif %}
+
+    {% if success %}
+    <div class="success">{{ success }}</div>
+    {% endif %}
+
+    <form method="post" action="/new" class="post-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+        <div class="form-group">
+            <label for="title">Title</label>
+            <input type="text" id="title" name="title" placeholder="Enter post title" required value="{{ title or '' }}">
+        </div>
+
+        <div class="editor-container">
+            <div class="editor-tabs">
+                <button type="button" class="tab-btn active" data-tab="write">Write</button>
+                <button type="button" class="tab-btn" data-tab="preview">Preview</button>
+            </div>
+
+            <div class="tab-content">
+                <div class="tab-pane active" id="write-pane">
+                    <textarea id="content" name="content" placeholder="Write your post in Markdown..." required rows="20">{{ content or '' }}</textarea>
+                </div>
+                <div class="tab-pane" id="preview-pane">
+                    <div class="preview-content post-content">
+                        <p class="preview-placeholder">Click "Preview" to see rendered markdown</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="form-actions">
+            <a href="/" class="btn-cancel">Cancel</a>
+            <button type="submit">Publish Post</button>
+        </div>
+    </form>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const tabBtns = document.querySelectorAll('.tab-btn');
+    const writePain = document.getElementById('write-pane');
+    const previewPane = document.getElementById('preview-pane');
+    const contentTextarea = document.getElementById('content');
+    const previewContent = previewPane.querySelector('.preview-content');
+
+    tabBtns.forEach(btn => {
+        btn.addEventListener('click', async function() {
+            tabBtns.forEach(b => b.classList.remove('active'));
+            this.classList.add('active');
+
+            const tab = this.dataset.tab;
+
+            if (tab === 'write') {
+                writePain.classList.add('active');
+                previewPane.classList.remove('active');
+            } else {
+                writePain.classList.remove('active');
+                previewPane.classList.add('active');
+
+                // Fetch preview
+                const content = contentTextarea.value;
+                if (content.trim()) {
+                    try {
+                        const response = await fetch('/api/preview', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({ content: content })
+                        });
+                        const html = await response.text();
+                        previewContent.innerHTML = html;
+                    } catch (error) {
+                        previewContent.innerHTML = '<p class="error">Failed to load preview</p>';
+                    }
+                } else {
+                    previewContent.innerHTML = '<p class="preview-placeholder">Nothing to preview yet</p>';
+                }
+            }
+        });
+    });
+});
+</script>
+{% endblock %}

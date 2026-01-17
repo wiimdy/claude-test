@@ -1,4 +1,5 @@
 import os
+import re
 import secrets
 import time
 from pathlib import Path
@@ -274,6 +275,110 @@ async def view_post(request: Request, slug: str):
         "request": request,
         "post": post,
     })
+
+
+def slugify(title: str) -> str:
+    """Convert title to URL-safe slug."""
+    slug = title.lower().strip()
+    slug = re.sub(r'[^\w\s-]', '', slug)
+    slug = re.sub(r'[-\s]+', '-', slug)
+    return slug[:50]  # Limit length
+
+
+@app.get("/new", response_class=HTMLResponse)
+async def new_post_page(request: Request):
+    """New post page."""
+    if not is_authenticated(request):
+        return RedirectResponse(url="/login", status_code=303)
+
+    csrf_token = generate_csrf_token()
+    request.session["csrf_token"] = csrf_token
+
+    return templates.TemplateResponse("new_post.html", {
+        "request": request,
+        "csrf_token": csrf_token,
+        "error": None,
+        "success": None,
+        "title": "",
+        "content": "",
+    })
+
+
+@app.post("/new", response_class=HTMLResponse)
+async def create_post(
+    request: Request,
+    title: str = Form(...),
+    content: str = Form(...),
+    csrf_token: str = Form(...),
+):
+    """Create a new post."""
+    if not is_authenticated(request):
+        return RedirectResponse(url="/login", status_code=303)
+
+    # Verify CSRF token
+    session_csrf = request.session.get("csrf_token", "")
+    if not secrets.compare_digest(csrf_token, session_csrf):
+        new_csrf = generate_csrf_token()
+        request.session["csrf_token"] = new_csrf
+        return templates.TemplateResponse("new_post.html", {
+            "request": request,
+            "csrf_token": new_csrf,
+            "error": "Invalid request. Please try again.",
+            "success": None,
+            "title": title,
+            "content": content,
+        }, status_code=403)
+
+    # Generate slug from title
+    slug = slugify(title)
+    if not slug:
+        new_csrf = generate_csrf_token()
+        request.session["csrf_token"] = new_csrf
+        return templates.TemplateResponse("new_post.html", {
+            "request": request,
+            "csrf_token": new_csrf,
+            "error": "Please enter a valid title.",
+            "success": None,
+            "title": title,
+            "content": content,
+        })
+
+    # Check if post already exists
+    filepath = POSTS_DIR / f"{slug}.md"
+    if filepath.exists():
+        # Add timestamp to make unique
+        slug = f"{slug}-{int(time.time())}"
+        filepath = POSTS_DIR / f"{slug}.md"
+
+    # Create post with frontmatter
+    today = datetime.now().strftime("%Y-%m-%d")
+    post_content = f"""---
+title: {title}
+date: {today}
+---
+
+{content}
+"""
+
+    # Save the post
+    POSTS_DIR.mkdir(exist_ok=True)
+    with open(filepath, "w", encoding="utf-8") as f:
+        f.write(post_content)
+
+    # Redirect to the new post
+    return RedirectResponse(url=f"/post/{slug}", status_code=303)
+
+
+@app.post("/api/preview", response_class=HTMLResponse)
+async def preview_markdown(request: Request):
+    """API endpoint to preview markdown content."""
+    if not is_authenticated(request):
+        raise HTTPException(status_code=401)
+
+    body = await request.json()
+    content = body.get("content", "")
+    html = markdown.markdown(content, extensions=["fenced_code", "tables", "toc"])
+    return HTMLResponse(content=html)
 
 
 if __name__ == "__main__":
