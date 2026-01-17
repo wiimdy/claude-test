@@ -1,7 +1,9 @@
 import os
-import re
+import secrets
+import time
 from pathlib import Path
 from datetime import datetime
+from collections import defaultdict
 
 from fastapi import FastAPI, Request, Form, Depends, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -15,7 +17,17 @@ BLOG_PASSWORD = os.environ.get("BLOG_PASSWORD", "secret")
 SECRET_KEY = os.environ.get("SECRET_KEY", "your-secret-key-change-in-production")
 POSTS_DIR = Path(__file__).parent / "posts"
 
-app = FastAPI(title="Private Blog")
+# Rate limiting configuration
+RATE_LIMIT_ATTEMPTS = 5  # Max attempts
+RATE_LIMIT_WINDOW = 300  # 5 minutes in seconds
+
+# Disable API docs in production
+app = FastAPI(
+    title="Private Blog",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+)
 
 # Add session middleware
 app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY)
@@ -25,6 +37,35 @@ app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), na
 
 # Setup templates
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
+
+# Rate limiting storage (IP -> list of attempt timestamps)
+login_attempts: dict[str, list[float]] = defaultdict(list)
+
+
+def get_client_ip(request: Request) -> str:
+    """Get client IP address."""
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def is_rate_limited(ip: str) -> bool:
+    """Check if IP is rate limited."""
+    now = time.time()
+    # Clean old attempts
+    login_attempts[ip] = [t for t in login_attempts[ip] if now - t < RATE_LIMIT_WINDOW]
+    return len(login_attempts[ip]) >= RATE_LIMIT_ATTEMPTS
+
+
+def record_login_attempt(ip: str):
+    """Record a failed login attempt."""
+    login_attempts[ip].append(time.time())
+
+
+def generate_csrf_token() -> str:
+    """Generate a CSRF token."""
+    return secrets.token_urlsafe(32)
 
 
 def parse_frontmatter(content: str) -> tuple[dict, str]:
@@ -153,22 +194,62 @@ async def login_page(request: Request):
     if is_authenticated(request):
         return RedirectResponse(url="/", status_code=303)
 
+    # Generate and store CSRF token in session
+    csrf_token = generate_csrf_token()
+    request.session["csrf_token"] = csrf_token
+
     return templates.TemplateResponse("login.html", {
         "request": request,
         "error": None,
+        "csrf_token": csrf_token,
     })
 
 
 @app.post("/login", response_class=HTMLResponse)
-async def login(request: Request, password: str = Form(...)):
+async def login(
+    request: Request,
+    password: str = Form(...),
+    csrf_token: str = Form(...),
+):
     """Handle login form submission."""
-    if password == BLOG_PASSWORD:
+    client_ip = get_client_ip(request)
+
+    # Check rate limiting
+    if is_rate_limited(client_ip):
+        return templates.TemplateResponse("login.html", {
+            "request": request,
+            "error": "Too many login attempts. Please try again later.",
+            "csrf_token": generate_csrf_token(),
+        }, status_code=429)
+
+    # Verify CSRF token
+    session_csrf = request.session.get("csrf_token", "")
+    if not secrets.compare_digest(csrf_token, session_csrf):
+        new_csrf = generate_csrf_token()
+        request.session["csrf_token"] = new_csrf
+        return templates.TemplateResponse("login.html", {
+            "request": request,
+            "error": "Invalid request. Please try again.",
+            "csrf_token": new_csrf,
+        }, status_code=403)
+
+    # Verify password
+    if secrets.compare_digest(password, BLOG_PASSWORD):
         request.session["authenticated"] = True
+        request.session.pop("csrf_token", None)  # Clear CSRF token after successful login
         return RedirectResponse(url="/", status_code=303)
+
+    # Record failed attempt
+    record_login_attempt(client_ip)
+
+    # Generate new CSRF token for retry
+    new_csrf = generate_csrf_token()
+    request.session["csrf_token"] = new_csrf
 
     return templates.TemplateResponse("login.html", {
         "request": request,
         "error": "Invalid password",
+        "csrf_token": new_csrf,
     })
 
 
