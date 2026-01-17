@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+
+{% block title %}{{ post.title }} - Private Blog{% endblock %}
+
+{% block content %}
+<article class="post-full">
+    <header class="post-header">
+        <h1>{{ post.title }}</h1>
+        <time datetime="{{ post.date.isoformat() }}">{{ post.date_str }}</time>
+    </header>
+
+    <div class="post-content">
+        {{ post.content | safe }}
+    </div>
+
+    <footer class="post-footer">
+        <a href="/">&larr; Back to posts</a>
+    </footer>
+</article>
+{% endblock %}

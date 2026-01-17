@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+
+{% block title %}Home - Private Blog{% endblock %}
+
+{% block content %}
+<div class="posts-container">
+    <h1>Posts</h1>
+
+    {% if posts %}
+    <div class="posts-list">
+        {% for post in posts %}
+        <article class="post-preview">
+            <h2><a href="/post/{{ post.slug }}">{{ post.title }}</a></h2>
+            <time datetime="{{ post.date.isoformat() }}">{{ post.date_str }}</time>
+            <p>{{ post.preview }}</p>
+        </article>
+        {% endfor %}
+    </div>
+    {% else %}
+    <p class="no-posts">No posts yet. Add markdown files to the <code>posts/</code> directory.</p>
+    {% endif %}
+</div>
+{% endblock %}
